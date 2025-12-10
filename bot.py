@@ -795,6 +795,24 @@ user_sessions = {}
 
 print("🤖 SPIDY Telegram Bot Started...")
 
+# --- NEW: safe edit helper (minimal change) ---
+def safe_edit_message(chat_id, message_id, text, reply_markup=None, parse_mode=None):
+    """
+    Try to edit a message; if it fails (message not editable / too old / not bot's message),
+    send a new message instead. This avoids the '400: message can't be edited' crash.
+    """
+    try:
+        # try editing first
+        return bot.edit_message_text(text, chat_id, message_id, reply_markup=reply_markup, parse_mode=parse_mode)
+    except Exception as e:
+        # fallback to sending a new message
+        try:
+            return bot.send_message(chat_id, text, reply_markup=reply_markup, parse_mode=parse_mode)
+        except Exception:
+            # If even sending fails, log and swallow so bot won't crash
+            print(f"⚠️ safe_edit_message failed: {e}")
+            return None
+
 @bot.message_handler(commands=['start'])
 def start_command(message):
     user_id = message.from_user.id
@@ -912,11 +930,12 @@ def region_selected(call):
         "region": region
     }
     
-    bot.edit_message_text(
-        f"🌍 Selected: **{region}**\n\n"
-        "📝 Now send me how many accounts to generate (1-30):",
+    # safe edit (uses wrapper)
+    safe_edit_message(
         call.message.chat.id,
         call.message.message_id,
+        f"🌍 Selected: **{region}**\n\n"
+        "📝 Now send me how many accounts to generate (1-30):",
         parse_mode="Markdown"
     )
 
@@ -1040,10 +1059,10 @@ def generate_accounts_background(user_id, region, count, name_prefix, password_p
 ⏳ Continuing...
                     """
                     try:
-                        bot.edit_message_text(
-                            progress_text,
+                        safe_edit_message(
                             chat_id,
                             progress_msg_id,
+                            progress_text,
                             parse_mode="Markdown"
                         )
                     except:
@@ -1063,21 +1082,17 @@ def generate_accounts_background(user_id, region, count, name_prefix, password_p
 Use 📁 Download button to get account files.
         """
         
-        bot.edit_message_text(
-            final_text,
+        safe_edit_message(
             chat_id,
             progress_msg_id,
+            final_text,
             parse_mode="Markdown"
         )
         
     except Exception as e:
         error_msg = f"❌ Generation failed: {str(e)}"
         try:
-            bot.edit_message_text(
-                error_msg,
-                chat_id,
-                progress_msg_id
-            )
+            safe_edit_message(chat_id, progress_msg_id, error_msg)
         except:
             bot.send_message(chat_id, error_msg)
 
@@ -1125,10 +1140,11 @@ def show_statistics(call):
 {chr(10).join(regional_stats) if regional_stats else "• No accounts yet"}
         """
         
-        bot.edit_message_text(
-            stats_text,
+        # use safe_edit_message wrapper to avoid editing non-editable messages
+        safe_edit_message(
             call.message.chat.id,
             call.message.message_id,
+            stats_text,
             parse_mode="Markdown"
         )
         
@@ -1215,10 +1231,11 @@ IND, ID, VN, TH, BD, PK, ME, GHOST
     keyboard = InlineKeyboardMarkup()
     keyboard.add(InlineKeyboardButton("🚀 Start Generating", callback_data="generate"))
     
-    bot.edit_message_text(
-        help_text,
+    # safe_edit_message wrapper used so show_help won't crash when called from commands that create fake calls
+    safe_edit_message(
         call.message.chat.id,
         call.message.message_id,
+        help_text,
         reply_markup=keyboard,
         parse_mode="Markdown"
     )
@@ -1241,6 +1258,8 @@ def download_command(message):
 
 @bot.message_handler(commands=['help'])
 def help_command(message):
+    # Instead of trying to edit the user's message (which is not editable), call show_help with a fake call
+    # show_help uses safe_edit_message so it will fallback to sending a new message if edit is not possible.
     msg = type('Message', (), {'chat': type('Chat', (), {'id': message.chat.id})(), 'message_id': message.message_id})()
     call = type('Call', (), {'message': msg})()
     show_help(call)
